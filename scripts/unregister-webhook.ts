@@ -14,7 +14,8 @@ dotenv.config();
 const MONDAY_API_URL = 'https://api.monday.com/v2';
 const MONDAY_TOKEN = process.env.MONDAY_TOKEN;
 const WEBHOOK_ID = process.env.WEBHOOK_ID;
-const SUBITEM_BOARD_ID = 18041802160;
+// Webhook is on parent board (Feature Board), not subitem board
+const FEATURE_BOARD_ID = 18041801957;
 
 interface Webhook {
   id: string;
@@ -41,7 +42,7 @@ interface DeleteWebhookResponse {
 }
 
 async function listWebhooks(): Promise<void> {
-  console.log(`Listing webhooks for board ${SUBITEM_BOARD_ID}...`);
+  console.log(`Listing webhooks for board ${FEATURE_BOARD_ID} (P2S Feature Board)...`);
   console.log('');
   
   const query = `
@@ -65,7 +66,7 @@ async function listWebhooks(): Promise<void> {
     },
     body: JSON.stringify({
       query,
-      variables: { boardId: [String(SUBITEM_BOARD_ID)] },
+      variables: { boardId: [String(FEATURE_BOARD_ID)] },
     }),
   });
   

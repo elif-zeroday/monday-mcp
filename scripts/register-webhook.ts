@@ -1,6 +1,10 @@
 /**
  * Script to register the webhook with Monday.com
  * 
+ * NOTE: Webhooks cannot be created on subitem boards directly.
+ * Instead, we create the webhook on the PARENT board (Feature Board)
+ * and listen for 'change_subitem_column_value' events.
+ * 
  * Usage: MONDAY_TOKEN=xxx WEBHOOK_URL=https://your-server.com/webhook npm run register-webhook
  */
 
@@ -12,7 +16,10 @@ dotenv.config();
 const MONDAY_API_URL = 'https://api.monday.com/v2';
 const MONDAY_TOKEN = process.env.MONDAY_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const SUBITEM_BOARD_ID = 18041802160;
+
+// IMPORTANT: Webhook must be on the PARENT board, not subitem board
+// Subitem boards don't support direct webhooks
+const FEATURE_BOARD_ID = 18041801957;  // P2S (Feature Board) - parent of subitems
 
 interface GraphQLResponse {
   data?: {
@@ -37,9 +44,12 @@ async function registerWebhook(): Promise<void> {
   }
   
   console.log('Registering webhook...');
-  console.log(`  Board ID: ${SUBITEM_BOARD_ID}`);
+  console.log(`  Parent Board ID: ${FEATURE_BOARD_ID} (P2S Feature Board)`);
   console.log(`  Webhook URL: ${WEBHOOK_URL}`);
-  console.log(`  Event: change_column_value`);
+  console.log(`  Event: change_subitem_column_value`);
+  console.log('');
+  console.log('NOTE: Webhook is on parent board because subitem boards');
+  console.log('      do not support direct webhook creation.');
   console.log('');
   
   const mutation = `
@@ -56,9 +66,9 @@ async function registerWebhook(): Promise<void> {
   `;
   
   const variables = {
-    boardId: String(SUBITEM_BOARD_ID),
+    boardId: String(FEATURE_BOARD_ID),
     url: WEBHOOK_URL,
-    event: 'change_column_value',
+    event: 'change_subitem_column_value',  // Listen for subitem column changes
   };
   
   try {
@@ -85,9 +95,8 @@ async function registerWebhook(): Promise<void> {
       console.log(`  Webhook ID: ${result.data.create_webhook.id}`);
       console.log(`  Board ID: ${result.data.create_webhook.board_id}`);
       console.log('');
-      console.log('IMPORTANT: Your webhook URL must respond to a challenge request.');
-      console.log('Monday.com will send a POST with { "challenge": "..." }');
-      console.log('You must respond with { "challenge": "..." }');
+      console.log('The webhook will trigger when any subitem column changes.');
+      console.log('The handler filters for column: board_relation_mkw4vrjt (İlgili Task)');
     } else {
       console.error('Unexpected response:', JSON.stringify(result, null, 2));
     }

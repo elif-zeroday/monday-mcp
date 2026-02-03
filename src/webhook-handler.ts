@@ -17,8 +17,16 @@ interface WebhookEvent {
     originalTriggerUuid?: string;
     boardId: number;
     groupId?: string;
+    // For change_subitem_column_value events:
+    // - pulseId is the PARENT item id
+    // - subitemId is the actual subitem that changed
     pulseId: number;
     pulseName: string;
+    subitemId?: number;        // The subitem that was changed
+    subitemName?: string;      // Name of the subitem
+    subitemBoardId?: number;   // Board ID of subitems
+    parentItemId?: number;     // Same as pulseId for subitem events
+    parentItemBoardId?: number;// Parent board ID
     columnId: string;
     columnType: string;
     columnTitle: string;
@@ -59,19 +67,30 @@ export async function handleWebhookEvent(
   
   const event = payload.event;
   
+  // For change_subitem_column_value events:
+  // - boardId is the PARENT board (Feature Board)
+  // - subitemId is the subitem that changed
+  // - pulseId is the parent item
+  const subitemId = event.subitemId || event.pulseId;
+  const parentItemId = event.parentItemId || event.pulseId;
+  
   // Log incoming event
   logger.info('Received webhook event', {
     requestId,
-    subitemId: event.pulseId,
+    subitemId,
+    parentItemId,
     boardId: event.boardId,
+    subitemBoardId: event.subitemBoardId,
     columnId: event.columnId,
   });
   
-  // Validate board ID
-  if (event.boardId !== config.boards.subitem) {
+  // For change_subitem_column_value events, Monday sends boardId as the SUBITEM board
+  // We need to accept events from the subitem board (18041802160)
+  // The parent board validation happens later when we fetch the subitem's parent
+  if (event.boardId !== config.boards.subitem && event.boardId !== config.boards.feature) {
     logger.warn('Ignoring event from unexpected board', {
       requestId,
-      expectedBoard: config.boards.subitem,
+      expectedBoards: [config.boards.subitem, config.boards.feature],
       actualBoard: event.boardId,
     });
     return { success: false, message: 'Event from unexpected board' };
@@ -91,37 +110,50 @@ export async function handleWebhookEvent(
   const linkedMainItemIds = event.value?.linkedPulseIds?.map(p => p.linkedPulseId) || [];
   
   if (linkedMainItemIds.length === 0) {
-    logger.info('No linked main items in event, nothing to do', { requestId, subitemId: event.pulseId });
+    logger.info('No linked main items in event, nothing to do', { requestId, subitemId });
     return { success: true, message: 'No linked items to process' };
   }
   
   logger.info('Processing subitem link change', {
     requestId,
-    subitemId: event.pulseId,
+    subitemId,
     mainItemIds: linkedMainItemIds,
   });
   
-  // Fetch subitem details including parent item
-  const subitem = await getSubitemWithParent(event.pulseId, requestId);
+  // For change_subitem_column_value, we may already have the parent info
+  // But let's fetch to be sure and get the full details
+  const subitem = await getSubitemWithParent(subitemId, requestId);
   
   if (!subitem) {
-    logger.error('Failed to fetch subitem', { requestId, subitemId: event.pulseId });
+    logger.error('Failed to fetch subitem', { requestId, subitemId });
     return { success: false, message: 'Failed to fetch subitem' };
   }
   
-  if (!subitem.parent_item) {
-    logger.warn('Subitem has no parent item', { requestId, subitemId: event.pulseId });
+  // Use parent from API response, or fall back to event data
+  let parentId: number;
+  let parentBoardId: number;
+  
+  if (subitem.parent_item) {
+    parentId = parseInt(subitem.parent_item.id, 10);
+    parentBoardId = parseInt(subitem.parent_item.board.id, 10);
+  } else if (event.parentItemId && event.parentItemBoardId) {
+    // Fallback to event data
+    parentId = event.parentItemId;
+    parentBoardId = event.parentItemBoardId;
+  } else if (event.pulseId && event.boardId) {
+    // For subitem events, pulseId is the parent
+    parentId = event.pulseId;
+    parentBoardId = event.boardId;
+  } else {
+    logger.warn('Subitem has no parent item info', { requestId, subitemId });
     return { success: false, message: 'Subitem has no parent item' };
   }
-  
-  const parentId = parseInt(subitem.parent_item.id, 10);
-  const parentBoardId = parseInt(subitem.parent_item.board.id, 10);
   
   // Validate parent is from the Feature board
   if (parentBoardId !== config.boards.feature) {
     logger.warn('Parent item is not from Feature board, ignoring', {
       requestId,
-      subitemId: event.pulseId,
+      subitemId,
       parentId,
       expectedBoard: config.boards.feature,
       actualBoard: parentBoardId,
@@ -131,7 +163,7 @@ export async function handleWebhookEvent(
   
   logger.info('Found parent item', {
     requestId,
-    subitemId: event.pulseId,
+    subitemId,
     parentId,
     parentBoardId,
   });
@@ -197,7 +229,7 @@ export async function handleWebhookEvent(
   
   logger.info('Finished processing webhook event', {
     requestId,
-    subitemId: event.pulseId,
+    subitemId,
     parentId,
     mainItemIds: linkedMainItemIds,
     updatedCount,
